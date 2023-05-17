@@ -1,4 +1,9 @@
-use std::io::stdout;
+// TODO: Nao deixar inserir dois registros com a mesma chave
+
+use std::{
+    fs::File,
+    io::{stdout, Write},
+};
 
 use crossterm::{
     terminal::{Clear, ClearType},
@@ -40,8 +45,15 @@ fn main() {
                     Ok("Inserir") => m = Menu::Inserir,
                     Ok("Remover") => m = Menu::Remover,
                     Ok("Buscar") => m = Menu::Buscar,
-                    Ok(_) => break,
-                    Err(_) => break,
+                    Ok(_) => {
+                        let encoded = h.serialize();
+
+                        let mut f = File::create("hash_alt1.bin").unwrap();
+                        f.write_all(&encoded).unwrap();
+
+                        break;
+                    }
+                    Err(_) => continue,
                 }
             }
             Menu::Inserir => {
