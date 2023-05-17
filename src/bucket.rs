@@ -1,16 +1,14 @@
-use std::fmt::{write, Display};
+use std::fmt::Display;
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Bucket {
     pub name: String,
-    local_depth: usize,
-    data: Vec<usize>,
-    size: usize,
+    pub local_depth: usize,
+    pub data: Vec<(i32, String)>,
+    pub size: usize,
 }
-
-// enum Key {
-//     Primary(i32),
-//     Secondary(String, i32),
-// }
 
 impl Bucket {
     pub fn new(name: String, local_depth: usize, size: usize) -> Self {
@@ -20,6 +18,37 @@ impl Bucket {
             data: Vec::with_capacity(size),
             size,
         }
+    }
+
+    pub fn insert(&mut self, record: (i32, String)) -> bool {
+        if self.data.len() == self.size {
+            return false;
+        }
+
+        self.data.push(record);
+
+        true
+    }
+
+    pub fn remove(&mut self, key: i32) -> bool {
+        for i in 0..self.data.len() {
+            if self.data[i].0 == key {
+                self.data.remove(i);
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn search(&self, key: i32) -> Option<(i32, String)> {
+        for i in 0..self.data.len() {
+            if self.data[i].0 == key {
+                return Some(self.data[i].clone());
+            }
+        }
+
+        None
     }
 }
 
@@ -37,7 +66,7 @@ impl Display for Bucket {
 
         for i in 0..self.size {
             if let Some(d) = self.data.get(i) {
-                s.push_str(format!("{: ^3}|", d).as_str())
+                s.push_str(format!("{: ^3}|", d.0).as_str())
             } else {
                 s.push_str(format!("   |",).as_str())
             }
