@@ -1,6 +1,6 @@
 use std::{fmt::Display, fs::File, io::Read};
 
-#[derive(Clone, PartialEq, Hash)]
+#[derive(Clone)]
 pub struct Bucket {
     pub name: String,
     pub local_depth: u8,
@@ -104,7 +104,10 @@ impl Bucket {
         let mut name = String::new();
 
         for byte in buffer {
-            name.push(char::from_u32(byte as u32).unwrap());
+            let char = char::from_u32(byte as u32).unwrap();
+            if char != '\0' {
+                name.push(char);
+            }
         }
 
         let mut buffer = [0; 1];
@@ -133,7 +136,11 @@ impl Bucket {
 
             text = String::from_utf8(buffer.to_vec()).unwrap();
 
-            data.push((nseq, text));
+            let text = text.trim_matches('\0').to_string();
+
+            if !text.is_empty() {
+                data.push((nseq, text));
+            }
         }
 
         Bucket {

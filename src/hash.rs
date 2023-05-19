@@ -1,11 +1,14 @@
-use crate::bucket::*;
+use crate::{
+    bucket::*,
+    random_util::{random_string, unique_random_numbers},
+};
 use core::fmt;
-use std::{cell::RefCell, collections::HashMap, fs::File, io::Read, rc::Rc};
+use std::{fs::File, io::Read};
 
 pub struct Hash {
     global_depth: u8,
-    directory: Vec<Rc<RefCell<Bucket>>>,
-    buckets: Vec<Rc<RefCell<Bucket>>>,
+    directory: Vec<usize>,
+    buckets: Vec<Bucket>,
 }
 
 impl Hash {
@@ -15,13 +18,13 @@ impl Hash {
         let mut directory = Vec::with_capacity(size);
         let mut buckets = Vec::with_capacity(size);
 
+        let mut init_name = "ZZ".to_string();
+
         for i in 0..size {
-            directory.push(Rc::new(RefCell::new(Bucket::new(
-                ((b'A' + i as u8) as char).to_string(),
-                global_depth,
-                bucket_size,
-            ))));
-            buckets.push(directory[i].clone());
+            init_name = next_string(&init_name);
+            buckets.push(Bucket::new(init_name.clone(), global_depth, bucket_size));
+
+            directory.push(i);
         }
 
         Hash {
@@ -31,60 +34,82 @@ impl Hash {
         }
     }
 
-    pub fn hash_fun(&self, num: i32) -> usize {
-        let mask = (1 << self.global_depth) - 1;
-        (num & mask) as usize
+    pub fn rand_hash_values(global_depth: u8, bucket_size: u8, n: usize) -> Self {
+        let mut nseq: i32;
+        let mut text: String;
+
+        let mut h = Hash::new(global_depth, bucket_size);
+        let random_nseq = unique_random_numbers(0, n as i32);
+
+        for i in 0..n {
+            nseq = random_nseq[i];
+            text = random_string(95);
+
+            h.insert((nseq, text));
+        }
+
+        h
     }
 
-    pub fn insert(&mut self, mut record: (i32, String)) {
-        if record.1.len() < 96 {
-            record.1 = format!(
-                "{}{}",
-                record.1,
-                "\0".to_string().repeat(96 - record.1.len())
-            )
+    pub fn hash_fun(&self, num: i32) -> usize {
+        (num % 2_i32.pow(self.global_depth as u32)) as usize
+    }
+
+    pub fn insert(&mut self, record: (i32, String)) -> bool {
+        if let Some(_) = self.search(record.0) {
+            return false;
         }
 
         let h = self.hash_fun(record.0);
 
-        if !self.directory[h].borrow_mut().insert(record.clone()) {
-            self.split(h);
-            self.insert(record)
+        if !self.buckets[self.directory[h]].insert(record.clone()) {
+            self.split(h, record);
         }
+
+        true
     }
 
-    fn split(&mut self, bucket_index: usize) {
-        let bucket = &self.directory[bucket_index];
-        let bkp = bucket.borrow_mut().clone();
-        bucket.replace(Bucket::new(bkp.name.clone(), bkp.local_depth + 1, bkp.size));
+    fn split(&mut self, dir_index: usize, record: (i32, String)) {
+        let bucket_index = self.directory[dir_index];
 
+        let bkp = self.buckets[bucket_index].clone();
+
+        // Dobra diretorio se ld = gd
         if bkp.local_depth == self.global_depth {
             self.double_directory();
         }
 
-        let new_bucket = Bucket::new(
-            bkp.name + bkp.local_depth.to_string().as_str(),
-            bkp.local_depth + 1,
-            bkp.size,
-        );
+        // Retira dado do balde e incrementa ld
+        self.buckets[bucket_index].data = Vec::new();
+        self.buckets[bucket_index].local_depth += 1;
 
-        self.buckets.push(Rc::new(RefCell::new(new_bucket)));
+        // Cria balde novo
+        self.buckets.push(Bucket::new(
+            next_string(&self.buckets.last().unwrap().name.clone()),
+            self.buckets[bucket_index].local_depth,
+            self.buckets[bucket_index].size,
+        ));
 
-        self.directory[bucket_index + 2_u32.pow(bkp.local_depth as u32) as usize] =
-            self.buckets.last().unwrap().clone();
+        // Mudar ponteiro para balde novo
+        for i in (dir_index + 1)..self.directory.len() {
+            if self.directory[i] == self.directory[dir_index] {
+                self.directory[i] = self.buckets.len() - 1;
+                break;
+            }
+        }
 
+        // Reorganizar entradas
         for i in bkp.data {
             self.insert(i);
         }
+        self.insert(record);
     }
 
     fn double_directory(&mut self) {
         let n = self.directory.len();
 
-        for i in n..2 * n {
-            let j = self.hash_fun(i as i32);
-
-            self.directory.push(self.directory[j].clone())
+        for i in 0..n {
+            self.directory.push(self.directory[i])
         }
 
         self.global_depth += 1;
@@ -93,17 +118,17 @@ impl Hash {
     pub fn remove(&mut self, key: i32) -> bool {
         let h: usize = self.hash_fun(key);
 
-        return self.directory[h].borrow_mut().remove(key);
+        return self.buckets[self.directory[h]].remove(key);
     }
 
     pub fn search(&self, key: i32) -> Option<(i32, String)> {
         let h = self.hash_fun(key);
 
-        return self.directory[h].borrow_mut().search(key);
+        return self.buckets[self.directory[h]].search(key);
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        // | 1B gd |  2B m | 405B b1 |405B b2 |...|405B bm | 2B n |4B d1 |4B d2 |...|4B dn |
+        // | 1B gd |  2B m | 405B b1 |405B b2 |...|405B bm | 2B n |2B d1 |2B d2 |...|2B dn |
 
         let mut encoded: Vec<u8> = Vec::new();
 
@@ -111,66 +136,99 @@ impl Hash {
         encoded.push(self.global_depth.to_be_bytes()[0]);
 
         // Buckets
-        let mut m: HashMap<String, u32> = HashMap::new();
-
         encoded.extend_from_slice(&(self.buckets.len() as u16).to_be_bytes());
 
-        let mut offset = encoded.len() as u32;
-
         for b in &self.buckets {
-            encoded.append(&mut b.borrow_mut().serialize());
-            m.insert(b.borrow_mut().name.clone(), offset * 8);
-            offset = encoded.len() as u32;
+            encoded.append(&mut b.serialize());
         }
 
         // Directory size
         encoded.extend_from_slice(&(self.directory.len() as u16).to_be_bytes());
 
         for d in &self.directory {
-            encoded.extend_from_slice(&m.get(&d.borrow_mut().name).unwrap().to_be_bytes())
+            encoded.extend_from_slice(&(*d as u16).to_be_bytes())
         }
 
         encoded
     }
 
     pub fn deserialize(mut f: &mut File) -> Self {
+        // Global depth (1B)
         let mut buffer = [0; 1];
 
         f.read(&mut buffer).unwrap();
 
         let global_depth = buffer[0];
 
+        // #baldes (2B)
         let mut buffer = [0; 2];
 
         f.read(&mut buffer).unwrap();
 
-        let m = u16::from_le_bytes(buffer) as usize;
+        let m = u16::from_be_bytes(buffer) as usize;
 
-        let s = 1 as usize;
+        // Baldes (#baldes * (5 + size * 100))
+        let mut buckets: Vec<Bucket> = Vec::new();
 
-        let mut buckets: Vec<Rc<RefCell<Bucket>>> = Vec::new();
-
-        for _ in (0..m).step_by(s) {
-            buckets.push(Rc::new(RefCell::new(Bucket::deserialize(&mut f))));
+        for _ in 0..m {
+            buckets.push(Bucket::deserialize(&mut f));
         }
 
+        // #direc
         let mut buffer = [0; 2];
 
         f.read(&mut buffer).unwrap();
 
         let n = u16::from_be_bytes(buffer);
-        let mut directory: Vec<Rc<RefCell<Bucket>>> = Vec::new();
+
+        // Diretorios
+        let mut directory: Vec<usize> = Vec::new();
+
+        let mut buffer = [0; 2];
 
         for _ in 0..n {
-            todo!()
+            f.read(&mut buffer).unwrap();
+
+            directory.push(u16::from_be_bytes(buffer) as usize);
         }
 
         Hash {
             global_depth,
-            directory: todo!(),
+            directory,
             buckets,
         }
     }
+}
+
+fn next_string(input: &String) -> String {
+    let mut chars = input.chars();
+
+    match (chars.next(), chars.next()) {
+        (Some('Z'), None) => "AA".to_string(),
+        (Some(l), None) => next_letter(l).to_string(),
+        (Some('Z'), Some('Z')) => 'A'.to_string(),
+        (Some(l), Some('Z')) => {
+            let mut s = String::new();
+
+            s.push(next_letter(l));
+            s.push('A');
+
+            s
+        }
+        (Some(l1), Some(l2)) => {
+            let mut s = String::new();
+
+            s.push(l1);
+            s.push(next_letter(l2));
+
+            s
+        }
+        (None, _) => 'A'.to_string(),
+    }
+}
+
+fn next_letter(input: char) -> char {
+    ((input as u8) + 1) as char
 }
 
 impl fmt::Display for Hash {
@@ -207,7 +265,7 @@ impl fmt::Display for Hash {
             hash_string.push_str(
                 format!(
                     "{: ^big_square_size$}|\n{pad}{big_square_sep}\n",
-                    self.directory[i].borrow_mut().name
+                    self.buckets[self.directory[i]].name
                 )
                 .as_str(),
             )
@@ -216,7 +274,7 @@ impl fmt::Display for Hash {
         let mut bucket_string = String::new();
 
         for b in &self.buckets {
-            bucket_string.push_str(format!("{}\n\n", b.borrow_mut()).as_str())
+            bucket_string.push_str(format!("{}\n\n", b).as_str())
         }
 
         let mut hash_lines: Vec<&str> = hash_string.lines().collect();
@@ -332,6 +390,24 @@ mod test {
     }
 
     #[test]
+    fn test_insert_split_double() {
+        let mut h = Hash::new(2, 4);
+
+        // 0, 8, 24, 56, 120
+
+        h.insert((0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+        h.insert((8, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+        h.insert((24, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+        h.insert((56, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+
+        println!("{h}");
+
+        h.insert((120, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+
+        println!("{h}");
+    }
+
+    #[test]
     fn test_serialize_hash() {
         let mut h = Hash::new(2, 4);
 
@@ -346,5 +422,16 @@ mod test {
         file.write_all(&encoded).unwrap();
 
         assert_eq!("_", "_")
+    }
+
+    #[test]
+    fn test_deserialize() {
+        let mut f = File::open("index.bin").unwrap();
+
+        let h = Hash::deserialize(&mut f);
+
+        println!("{h}");
+
+        assert_eq!("", "")
     }
 }
