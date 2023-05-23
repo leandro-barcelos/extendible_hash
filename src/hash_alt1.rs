@@ -1,17 +1,18 @@
 use crate::{
-    bucket::*,
+    bucket_alt1::*,
     random_util::{random_string, unique_random_numbers},
+    record::Record,
 };
 use core::fmt;
 use std::{fs::File, io::Read};
 
-pub struct Hash {
+pub struct HashAlt1 {
     global_depth: u8,
     directory: Vec<usize>,
-    buckets: Vec<Bucket>,
+    pub buckets: Vec<BucketAlt1>,
 }
 
-impl Hash {
+impl HashAlt1 {
     pub fn new(global_depth: u8, bucket_size: u8) -> Self {
         let size = 2_u32.pow(global_depth as u32) as usize;
 
@@ -22,45 +23,32 @@ impl Hash {
 
         for i in 0..size {
             init_name = next_string(&init_name);
-            buckets.push(Bucket::new(init_name.clone(), global_depth, bucket_size));
+            buckets.push(BucketAlt1::new(
+                init_name.clone(),
+                global_depth,
+                bucket_size,
+            ));
 
             directory.push(i);
         }
 
-        Hash {
+        HashAlt1 {
             global_depth,
             directory,
             buckets,
         }
     }
 
-    pub fn rand_hash_values(global_depth: u8, bucket_size: u8, n: usize) -> Self {
-        let mut nseq: i32;
-        let mut text: String;
-
-        let mut h = Hash::new(global_depth, bucket_size);
-        let random_nseq = unique_random_numbers(0, n as i32);
-
-        for i in 0..n {
-            nseq = random_nseq[i];
-            text = random_string(95);
-
-            h.insert((nseq, text));
-        }
-
-        h
-    }
-
     pub fn hash_fun(&self, num: i32) -> usize {
         (num % 2_i32.pow(self.global_depth as u32)) as usize
     }
 
-    pub fn insert(&mut self, record: (i32, String)) -> bool {
-        if let Some(_) = self.search(record.0) {
+    pub fn insert(&mut self, record: Record) -> bool {
+        if let Some(_) = self.search(record.nseq) {
             return false;
         }
 
-        let h = self.hash_fun(record.0);
+        let h = self.hash_fun(record.nseq);
 
         if !self.buckets[self.directory[h]].insert(record.clone()) {
             self.split(h, record);
@@ -69,7 +57,7 @@ impl Hash {
         true
     }
 
-    fn split(&mut self, dir_index: usize, record: (i32, String)) {
+    fn split(&mut self, dir_index: usize, record: Record) {
         let bucket_index = self.directory[dir_index];
 
         let bkp = self.buckets[bucket_index].clone();
@@ -84,7 +72,7 @@ impl Hash {
         self.buckets[bucket_index].local_depth += 1;
 
         // Cria balde novo
-        self.buckets.push(Bucket::new(
+        self.buckets.push(BucketAlt1::new(
             next_string(&self.buckets.last().unwrap().name.clone()),
             self.buckets[bucket_index].local_depth,
             self.buckets[bucket_index].size,
@@ -115,16 +103,20 @@ impl Hash {
         self.global_depth += 1;
     }
 
-    pub fn remove(&mut self, key: i32) -> bool {
+    pub fn remove(&mut self, key: i32) -> Option<Record> {
         let h: usize = self.hash_fun(key);
 
         return self.buckets[self.directory[h]].remove(key);
     }
 
-    pub fn search(&self, key: i32) -> Option<(i32, String)> {
+    pub fn search(&self, key: i32) -> Option<(usize, usize)> {
         let h = self.hash_fun(key);
 
-        return self.buckets[self.directory[h]].search(key);
+        if let Some(slotid) = self.buckets[self.directory[h]].search(key) {
+            return Some((self.directory[h], slotid));
+        }
+
+        return None;
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -168,10 +160,10 @@ impl Hash {
         let m = u16::from_be_bytes(buffer) as usize;
 
         // Baldes (#baldes * (5 + size * 100))
-        let mut buckets: Vec<Bucket> = Vec::new();
+        let mut buckets: Vec<BucketAlt1> = Vec::new();
 
         for _ in 0..m {
-            buckets.push(Bucket::deserialize(&mut f));
+            buckets.push(BucketAlt1::deserialize(&mut f));
         }
 
         // #direc
@@ -192,7 +184,7 @@ impl Hash {
             directory.push(u16::from_be_bytes(buffer) as usize);
         }
 
-        Hash {
+        HashAlt1 {
             global_depth,
             directory,
             buckets,
@@ -231,7 +223,7 @@ fn next_letter(input: char) -> char {
     ((input as u8) + 1) as char
 }
 
-impl fmt::Display for Hash {
+impl fmt::Display for HashAlt1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut hash_string = String::new();
         let left_padding = (self.global_depth + 2) as usize;
@@ -309,7 +301,7 @@ mod test {
 
     #[test]
     fn test_hash_display_global_depth_2() {
-        let h = Hash::new(2, 4);
+        let h = HashAlt1::new(2, 4);
 
         println!("{h}");
 
@@ -320,7 +312,7 @@ mod test {
 
     #[test]
     fn test_hash_display_global_depth_3() {
-        let h = Hash::new(3, 4);
+        let h = HashAlt1::new(3, 4);
 
         println!("{h}");
 
@@ -329,7 +321,7 @@ mod test {
 
     #[test]
     fn test_hash_display_global_depth_4() {
-        let h = Hash::new(4, 4);
+        let h = HashAlt1::new(4, 4);
 
         println!("{h}");
 
@@ -338,47 +330,49 @@ mod test {
 
     #[test]
     fn test_hash_fun_2() {
-        let h = Hash::new(2, 4);
+        let h = HashAlt1::new(2, 4);
 
         assert_eq!(h.hash_fun(343), 3)
     }
 
     #[test]
     fn test_hash_fun_3() {
-        let h = Hash::new(3, 4);
+        let h = HashAlt1::new(3, 4);
 
         assert_eq!(h.hash_fun(343), 7)
     }
 
     #[test]
     fn test_insert_global_depth_2() {
-        let mut h = Hash::new(2, 4);
+        let mut h = HashAlt1::new(2, 4);
 
         println!("{h}");
 
-        h.insert((2, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((10, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((102, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((98, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((118, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
+        h.insert(Record{nseq: 2, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 10, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 102, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 98, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 118, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
 
         println!("{h}");
 
-        h.insert((0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((4, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((12, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((20, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
-        h.insert((24, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()));
+        h.insert(Record{nseq: 0, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 4, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 12, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 20, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
+        h.insert(Record{nseq: 24, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.".to_string()});
 
         println!("{h}");
 
-        assert_eq!(h.search(0), Some((0_i32, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.\0".to_string())));
+        let s1 = h.search(0).unwrap();
+        let s2 = h.search(14);
+        assert_eq!(h.buckets[s1.0].data[s1.1], Record{nseq: 0_i32, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis quis fringilla diam. Duis in est.\0".to_string()});
         assert_eq!(h.search(14), None)
     }
 
     #[test]
     fn test_hash_double_directory() {
-        let mut h = Hash::new(2, 4);
+        let mut h = HashAlt1::new(2, 4);
 
         println!("{h}");
 
@@ -391,30 +385,30 @@ mod test {
 
     #[test]
     fn test_insert_split_double() {
-        let mut h = Hash::new(2, 4);
+        let mut h = HashAlt1::new(2, 4);
 
         // 0, 8, 24, 56, 120
 
-        h.insert((0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
-        h.insert((8, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
-        h.insert((24, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
-        h.insert((56, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+        h.insert(Record{nseq: 0, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
+        h.insert(Record{nseq: 8, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
+        h.insert(Record{nseq: 24, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
+        h.insert(Record{nseq: 56, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
 
         println!("{h}");
 
-        h.insert((120, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+        h.insert(Record{nseq: 120, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
 
         println!("{h}");
     }
 
     #[test]
     fn test_serialize_hash() {
-        let mut h = Hash::new(2, 4);
+        let mut h = HashAlt1::new(2, 4);
 
-        h.insert((0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
-        h.insert((1, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
-        h.insert((2, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
-        h.insert((3, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()));
+        h.insert(Record{nseq: 0, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
+        h.insert(Record{nseq: 1, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
+        h.insert(Record{nseq: 2, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
+        h.insert(Record{nseq: 3, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()});
 
         let encoded = h.serialize();
 
@@ -428,7 +422,7 @@ mod test {
     fn test_deserialize() {
         let mut f = File::open("index.bin").unwrap();
 
-        let h = Hash::deserialize(&mut f);
+        let h = HashAlt1::deserialize(&mut f);
 
         println!("{h}");
 

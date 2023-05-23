@@ -1,6 +1,7 @@
 // TODO: Nao deixar inserir dois registros com a mesma chave
 
 use std::{
+    fmt::format,
     fs::File,
     io::{stdout, Write},
 };
@@ -9,12 +10,19 @@ use crossterm::{
     terminal::{Clear, ClearType},
     ExecutableCommand,
 };
-use hash::Hash;
+use hash_alt1::HashAlt1;
+use hash_alt2::HashAlt2;
 use inquire::{max_length, Select, Text};
+use random_util::{random_string, unique_random_numbers};
 
-mod bucket;
-mod hash;
+use crate::record::Record;
+
+mod bucket_alt1;
+mod bucket_alt2;
+mod hash_alt1;
+mod hash_alt2;
 mod random_util;
+mod record;
 
 enum Menu {
     GeraHash,
@@ -27,9 +35,11 @@ enum Menu {
 }
 
 fn main() {
-    let mut h: Hash;
+    let mut h_alt1: HashAlt1;
+    let mut h_alt2: HashAlt2;
 
-    h = Hash::new(1, 4);
+    h_alt1 = HashAlt1::new(1, 4);
+    h_alt2 = HashAlt2::new(1, 4);
 
     let mut m = Menu::GeraHash;
     let mut stdout = stdout();
@@ -37,10 +47,8 @@ fn main() {
     loop {
         stdout.execute(Clear(ClearType::All)).unwrap();
         let header = "=".to_string().repeat(20);
-
-        // if h.
         println!("{header} HASH TABLE {header}\n",);
-        println!("{h}");
+        print!("{h_alt1}");
 
         match m {
             Menu::GeraHash => {
@@ -52,7 +60,13 @@ fn main() {
                     Ok("Novo") => m = Menu::Novo,
                     Ok("Carregar") => {
                         if let Ok(mut file) = File::open("hash_alt1.bin") {
-                            h = Hash::deserialize(&mut file)
+                            h_alt1 = HashAlt1::deserialize(&mut file)
+                        } else {
+                            return;
+                        }
+
+                        if let Ok(mut file) = File::open("hash_alt2.bin") {
+                            h_alt2 = HashAlt2::deserialize(&mut file)
                         } else {
                             return;
                         }
@@ -60,11 +74,7 @@ fn main() {
                     }
                     Ok("Aleatorio") => m = Menu::Random,
                     Ok(_) => {
-                        let encoded = h.serialize();
-
-                        let mut f = File::create("hash_alt1.bin").unwrap();
-                        f.write_all(&encoded).unwrap();
-
+                        save_quit(&h_alt1, &h_alt2);
                         break;
                     }
                     Err(_) => continue,
@@ -99,7 +109,11 @@ fn main() {
                     })
                     .prompt();
 
-                h = Hash::new(gd.unwrap().parse().unwrap(), bs.unwrap().parse().unwrap());
+                let gd: u8 = gd.unwrap().parse().unwrap();
+                let bs: u8 = bs.unwrap().parse().unwrap();
+
+                h_alt1 = HashAlt1::new(gd, bs);
+                h_alt2 = HashAlt2::new(gd, bs);
 
                 m = Menu::Principal;
             }
@@ -116,11 +130,7 @@ fn main() {
                     Ok("Remover") => m = Menu::Remover,
                     Ok("Buscar") => m = Menu::Buscar,
                     Ok(_) => {
-                        let encoded = h.serialize();
-
-                        let mut f = File::create("hash_alt1.bin").unwrap();
-                        f.write_all(&encoded).unwrap();
-
+                        save_quit(&h_alt1, &h_alt2);
                         break;
                     }
                     Err(_) => continue,
@@ -146,30 +156,76 @@ fn main() {
                 let text = Text::new("Text: ")
                     .with_help_message("Digite um valor para o campo nseq do registro")
                     .with_validator(max_length!(96, "No maximo 96 caracteres"))
-                    .prompt();
+                    .prompt()
+                    .unwrap();
 
-                h.insert((nseq, text.unwrap()));
+                h_alt1.insert(Record {
+                    nseq,
+                    text: text.clone(),
+                });
+
+                h_alt2.insert(h_alt1.search(nseq).unwrap(), (text, nseq));
 
                 m = Menu::Principal;
             }
             Menu::Remover => {
-                let nseq = Text::new("Nseq: ")
-                    .with_help_message("Digite a chave (nseq) para remocao: ")
-                    .with_validator(|n: &str| {
-                        let parsed: Result<i32, _> = n.parse();
-                        if let Ok(_) = parsed {
-                            Ok(inquire::validator::Validation::Valid)
-                        } else {
-                            Ok(inquire::validator::Validation::Invalid(
-                                "Tem que ser um inteiro".into(),
-                            ))
+                let alt = Select::new(
+                    "Qual tipo de chave: ",
+                    vec!["Primaria (nseq)", "Secundaria (text + nseq)"],
+                )
+                .prompt();
+
+                match alt {
+                    Ok("Primaria (nseq)") => {
+                        let nseq = Text::new("Nseq: ")
+                            .with_help_message("Digite a chave (nseq) para remocao: ")
+                            .with_validator(|n: &str| {
+                                let parsed: Result<i32, _> = n.parse();
+                                if let Ok(_) = parsed {
+                                    Ok(inquire::validator::Validation::Valid)
+                                } else {
+                                    Ok(inquire::validator::Validation::Invalid(
+                                        "Tem que ser um inteiro".into(),
+                                    ))
+                                }
+                            })
+                            .prompt();
+
+                        let nseq: i32 = nseq.unwrap().parse().unwrap();
+
+                        if let Some(r) = h_alt1.remove(nseq) {
+                            h_alt2.remove((r.text, r.nseq));
                         }
-                    })
-                    .prompt();
+                    }
+                    Ok("Secundaria (text + nseq)") => {
+                        let text = Text::new("Text: ")
+                            .with_help_message("Digite a chave (nseq) para remocao: ")
+                            .prompt()
+                            .unwrap();
 
-                let nseq: i32 = nseq.unwrap().parse().unwrap();
+                        let nseq = Text::new("Nseq: ")
+                            .with_help_message("Digite a chave (nseq) para remocao: ")
+                            .with_validator(|n: &str| {
+                                let parsed: Result<i32, _> = n.parse();
+                                if let Ok(_) = parsed {
+                                    Ok(inquire::validator::Validation::Valid)
+                                } else {
+                                    Ok(inquire::validator::Validation::Invalid(
+                                        "Tem que ser um inteiro".into(),
+                                    ))
+                                }
+                            })
+                            .prompt();
 
-                h.remove(nseq);
+                        let nseq: i32 = nseq.unwrap().parse().unwrap();
+
+                        if h_alt2.remove((text, nseq)) {
+                            h_alt1.remove(nseq);
+                        }
+                    }
+                    Ok(_) => todo!(),
+                    Err(_) => todo!(),
+                }
 
                 m = Menu::Principal;
             }
@@ -190,10 +246,13 @@ fn main() {
 
                 let nseq: i32 = nseq.unwrap().parse().unwrap();
 
-                let f = h.search(nseq);
+                let f = h_alt1.search(nseq);
 
                 match f {
-                    Some(t) => println!("{} - {}", t.0, t.1),
+                    Some(t) => println!(
+                        "{} - {}",
+                        h_alt1.buckets[t.0].data[t.1].nseq, h_alt1.buckets[t.0].data[t.1].text
+                    ),
                     None => println!("Chave {nseq} nao encontrada"),
                 }
 
@@ -233,9 +292,43 @@ fn main() {
 
                 gd = log_n - (bs as f64).log2() as u8;
 
-                h = Hash::rand_hash_values(gd, bs, n);
+                h_alt1 = HashAlt1::new(gd, bs);
+                h_alt2 = HashAlt2::new(gd, bs);
+
+                rand_hash_values(&mut h_alt1, &mut h_alt2, n);
                 m = Menu::Principal;
             }
         }
+    }
+}
+
+fn save_quit(h1: &HashAlt1, h2: &HashAlt2) {
+    let encoded1 = h1.serialize();
+    let encoded2 = h2.serialize();
+
+    let mut f = File::create("hash_alt1.bin").unwrap();
+    f.write_all(&encoded1).unwrap();
+
+    let mut f = File::create("hash_alt2.bin").unwrap();
+    f.write_all(&encoded2).unwrap();
+}
+
+fn rand_hash_values(h1: &mut HashAlt1, h2: &mut HashAlt2, n: usize) {
+    let mut nseq: i32;
+    let mut text: String;
+
+    let random_nseq = unique_random_numbers(0, n as i32);
+
+    for i in 0..n {
+        nseq = random_nseq[i];
+        text = random_string(95);
+
+        h1.insert(Record {
+            nseq,
+            text: text.clone(),
+        });
+        let rid = h1.search(nseq).unwrap();
+
+        h2.insert(rid, (text, nseq));
     }
 }

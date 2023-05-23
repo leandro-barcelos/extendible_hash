@@ -1,16 +1,18 @@
 use std::{fmt::Display, fs::File, io::Read};
 
+use crate::record::Record;
+
 #[derive(Clone)]
-pub struct Bucket {
+pub struct BucketAlt1 {
     pub name: String,
     pub local_depth: u8,
-    pub data: Vec<(i32, String)>,
+    pub data: Vec<Record>,
     pub size: u8,
 }
 
-impl Bucket {
+impl BucketAlt1 {
     pub fn new(name: String, local_depth: u8, size: u8) -> Self {
-        Bucket {
+        BucketAlt1 {
             name,
             local_depth,
             data: Vec::with_capacity(size as usize),
@@ -18,31 +20,32 @@ impl Bucket {
         }
     }
 
-    pub fn insert(&mut self, record: (i32, String)) -> bool {
+    pub fn insert(&mut self, r: Record) -> bool {
         if self.data.len() == self.size as usize {
             return false;
         }
 
-        self.data.push(record);
+        self.data.push(r);
 
         true
     }
 
-    pub fn remove(&mut self, key: i32) -> bool {
+    pub fn remove(&mut self, key: i32) -> Option<Record> {
         for i in 0..self.data.len() {
-            if self.data[i].0 == key {
+            if self.data[i].nseq == key {
+                let bkp = self.data[i].clone();
                 self.data.remove(i);
-                return true;
+                return Some(bkp);
             }
         }
 
-        false
+        None
     }
 
-    pub fn search(&self, key: i32) -> Option<(i32, String)> {
+    pub fn search(&self, key: i32) -> Option<usize> {
         for i in 0..self.data.len() {
-            if self.data[i].0 == key {
-                return Some(self.data[i].clone());
+            if self.data[i].nseq == key {
+                return Some(i);
             }
         }
 
@@ -79,14 +82,14 @@ impl Bucket {
 
         for (i, record) in self.data.iter().enumerate() {
             let mut start = n + (100 * i);
-            let tmp = record.0.to_be_bytes();
+            let tmp = record.nseq.to_be_bytes();
 
             for byte in tmp {
                 encoded[start] = byte;
                 start += 1;
             }
 
-            let tmp = record.1.as_bytes();
+            let tmp = record.text.as_bytes();
 
             for byte in tmp {
                 encoded[start] = *byte;
@@ -119,7 +122,7 @@ impl Bucket {
         f.read(&mut buffer).unwrap();
 
         let size: usize = u8::from_be_bytes(buffer) as usize;
-        let mut data: Vec<(i32, String)> = Vec::new();
+        let mut data: Vec<Record> = Vec::new();
 
         for _ in 0..size {
             let mut buffer = [0; 4];
@@ -139,11 +142,11 @@ impl Bucket {
             let text = text.trim_matches('\0').to_string();
 
             if !text.is_empty() {
-                data.push((nseq, text));
+                data.push(Record { nseq, text });
             }
         }
 
-        Bucket {
+        BucketAlt1 {
             name,
             local_depth,
             data,
@@ -152,7 +155,7 @@ impl Bucket {
     }
 }
 
-impl Display for Bucket {
+impl Display for BucketAlt1 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::new();
 
@@ -166,7 +169,7 @@ impl Display for Bucket {
 
         for i in 0..self.size as usize {
             if let Some(d) = self.data.get(i) {
-                s.push_str(format!("{: ^3}|", d.0).as_str())
+                s.push_str(format!("{: ^3}|", d.nseq).as_str())
             } else {
                 s.push_str(format!("   |",).as_str())
             }
@@ -188,7 +191,7 @@ mod test {
 
     #[test]
     fn test_bucket_display_size_4() {
-        let b = Bucket::new("A".to_string(), 2, 4);
+        let b = BucketAlt1::new("A".to_string(), 2, 4);
 
         println!("{b}");
 
@@ -197,7 +200,7 @@ mod test {
 
     #[test]
     fn test_bucket_display_size_8() {
-        let b = Bucket::new("A".to_string(), 2, 8);
+        let b = BucketAlt1::new("A".to_string(), 2, 8);
 
         println!("{b}");
 
@@ -206,7 +209,7 @@ mod test {
 
     #[test]
     fn test_bucket_display_size_16() {
-        let b = Bucket::new("A".to_string(), 2, 16);
+        let b = BucketAlt1::new("A".to_string(), 2, 16);
 
         println!("{b}");
 
@@ -215,14 +218,14 @@ mod test {
 
     #[test]
     fn test_serialize() {
-        let b1 = Bucket {
+        let b1 = BucketAlt1 {
             name: "A".to_string(),
             local_depth: 2,
             data: vec![
-                (0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()),
-                (1, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()),
-                (2, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()),
-                (3, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()),
+                (Record{nseq: 0, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()}),
+                (Record{nseq: 1, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()}),
+                (Record{nseq: 2, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()}),
+                (Record{nseq: 3, text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque imperdiet lacinia orci aliquam.".to_string()}),
             ],
             size: 4,
         };
